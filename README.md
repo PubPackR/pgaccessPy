@@ -41,20 +41,57 @@ uv run pytest tests -v
 
 ### Production (base apps)
 
-Production consumes this repo as a **git submodule**, not as a pip install. The
-FlowForce host on `shiny.studyflix.info` has no dependency installation step —
-deploys only rsync files — so `cryptography` and `psycopg2` must already be
-hand-installed on the host. The versions pinned in `pyproject.toml` are the
-versions confirmed installed there.
+**Not yet wired up anywhere.** No app consumes this package in production today;
+base-65 still carries its own copies of both modules. Read this section before
+wiring the first one — the deploy has constraints that are not obvious.
 
-Because the package is imported from a checked-out submodule rather than
-installed, the submodule's directory has to be on `sys.path` before the first
-`from pgaccess import ...`. Two things to verify when wiring a consuming repo:
+This package is not on PyPI, so `pip install pgaccess` will never work. There are
+two possible routes, and neither is free.
 
-- its deploy workflow checks out submodules (`actions/checkout` with
-  `submodules: recursive`) — otherwise the directory rsyncs to the host empty
-  and every import fails at runtime;
-- the rsync step does not exclude the submodule path.
+#### Route A — install on the host from git
+
+```sh
+pip install git+https://github.com/PubPackR/pgaccessPy
+```
+
+Works without credentials because the repo is public. Needs no deploy changes at
+all, and matches how every other Python dependency on `shiny.studyflix.info`
+already exists: hand-installed and unmanaged.
+
+The cost: every consuming app shares one installed version, so upgrading the
+library upgrades all of them at once. Staged migrations are not possible.
+
+#### Route B — git submodule
+
+The package files travel inside the consuming repo, so nothing is installed on
+the host. Each app pins its own commit, so apps can migrate one at a time.
+
+The cost is three separate changes, all currently missing:
+
+1. **The shared deploy workflow must check out submodules.**
+   `studyflix/Shiny-0-studyflix-infrastructure/.github/workflows/deploy-app.yml`
+   uses `actions/checkout@v7` with no `submodules:` input, so submodule
+   directories arrive empty. A consuming repo cannot fix this itself — the
+   checkout happens inside the shared workflow, which accepts only
+   `shiny_host` / `shiny_port` / `shiny_username`.
+
+2. **The submodule must live inside `func/`.** That deploy does not copy the
+   repository; it copies a hardcoded allowlist of names — `app.R`, `config.R`,
+   `config.yaml`, `func/`, `do/`, `one-off/`, `www/`, `Dockerfile`,
+   `.dockerignore`, `requirements.txt`. A submodule at the repository root is
+   never transferred, however correct the checkout is. Inside `func/` it rides
+   along with a directory that is already copied.
+
+3. **A `sys.path` bootstrap.** Nothing installs the package, so Python cannot
+   find `pgaccess` on its own. The submodule's directory has to be prepended to
+   `sys.path` before the first `from pgaccess import ...`.
+
+#### Either way
+
+The host runs no dependency installation step — deploys only rsync files, and
+the `requirements.txt` in the allowlist above is copied but never installed. So
+`cryptography` and `psycopg2` must already be hand-installed on the host. The
+versions pinned in `pyproject.toml` are the versions confirmed installed there.
 
 ## Configuration
 
