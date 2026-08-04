@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions: read-all
+
+jobs:
+  test:
+    name: pytest (Python 3.12 + Postgres 16)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # Throwaway database for the integration tests. Torn down with the job;
+        # it never holds anything real.
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pgaccess_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGACCESS_IT_HOST: localhost
+      PGACCESS_IT_PORT: "5432"
+      PGACCESS_IT_DB: pgaccess_test
+      PGACCESS_IT_USER: postgres
+      PGACCESS_IT_PASSWORD: postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Verify the throwaway Postgres is reachable
+        # The integration tests skip themselves when no database is available.
+        # Without this step a broken service container would leave the job green
+        # with half the suite silently skipped.
+        run: >-
+          uv run python -c
+          "import psycopg2, os;
+          psycopg2.connect(host=os.environ['PGACCESS_IT_HOST'],
+          port=os.environ['PGACCESS_IT_PORT'],
+          dbname=os.environ['PGACCESS_IT_DB'],
+          user=os.environ['PGACCESS_IT_USER'],
+          password=os.environ['PGACCESS_IT_PASSWORD']).close()"
+
+      - name: Run tests
+        # -ra reports skips in the summary, so any future gating is visible.
+        run: uv run pytest tests -v -ra
