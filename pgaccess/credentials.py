@@ -19,7 +19,12 @@ import os
 from cryptography.fernet import Fernet
 
 DEFAULT_KEY_DIR = "../../keys/PostgreSQL_DB"
-DEFAULT_SSL_ROOT_CERT = "../../keys/PostgreSQL_DB/eu-central-1-bundle.pem"
+# Deliberately NOT under DEFAULT_KEY_DIR: on shiny.studyflix.info the encrypted
+# credential files live in keys/PostgreSQL_DB/ but the RDS CA bundle sits in
+# metabase-data/postgres/, which is where Billomatics::postgres_connect() points
+# the R stack. The two really do live in different trees. Verified on the host
+# 2026-08-04, after the previous keys/PostgreSQL_DB/ default failed to resolve.
+DEFAULT_SSL_ROOT_CERT = "../../metabase-data/postgres/eu-central-1-bundle.pem"
 
 
 class CredentialManager:

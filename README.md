@@ -102,7 +102,7 @@ All settings come from environment variables. Nothing is hardcoded per host.
 | `DB_MODE` | `server` | `server` (encrypted keyfiles) or `local` (interactive password prompt) |
 | `DB_MASTER_KEY` | — | **Required in server mode.** Decrypts the credential files. |
 | `DB_KEY_DIR` | `../../keys/PostgreSQL_DB` | Directory holding the encrypted credential files |
-| `DB_SSL_ROOT_CERT` | `../../keys/PostgreSQL_DB/eu-central-1-bundle.pem` | SSL root cert, verified against in server mode (`sslmode=verify-full`) |
+| `DB_SSL_ROOT_CERT` | `../../metabase-data/postgres/eu-central-1-bundle.pem` | RDS CA bundle, verified against in server mode (`sslmode=verify-full`) |
 | `DB_LOCAL_HOST` | `localhost` | Local mode only |
 
 `DB_MASTER_KEY` is deliberately **separate** from `ADMANAGER_DECRYPT_KEY` and any
@@ -112,13 +112,21 @@ other application secret. This package only ever knows about the database.
 
 The two path defaults are **relative to the process working directory**, not to
 this package's location on disk. They resolve correctly only when the process
-runs from the root of a base-app repo laid out as a sibling of `base-data` and
-`keys`:
+runs from the root of a base-app repo laid out as a sibling of `base-data`,
+`keys` and `metabase-data`:
 
 ```
-~/base-apps/<repo>/     <- process CWD
-~/keys/PostgreSQL_DB/   <- reached as ../../keys/PostgreSQL_DB
+~/base-apps/<repo>/          <- process CWD
+~/keys/PostgreSQL_DB/        <- ../../keys/PostgreSQL_DB       (encrypted credentials)
+~/metabase-data/postgres/    <- ../../metabase-data/postgres   (RDS CA bundle)
 ```
+
+**The credentials and the certificate are in different trees**, which is easy to
+get wrong: the bundle is *not* under `keys/PostgreSQL_DB/`. It sits where
+`Billomatics::postgres_connect()` expects it, so the R and Python stacks read the
+same file. An earlier version of this package defaulted the certificate to the
+keys directory; that path does not exist on the host and every server-mode
+connection failed on it.
 
 Anywhere else — a different layout, a test runner, a container — set `DB_KEY_DIR`
 and `DB_SSL_ROOT_CERT` explicitly, or pass `key_dir` / `ssl_root_cert` to

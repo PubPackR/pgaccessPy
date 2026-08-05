@@ -39,6 +39,21 @@ def test_server_mode_master_key_unset_raises(monkeypatch, tmp_path):
         CredentialManager(key_dir=str(tmp_path)).get_db_config()
 
 
+def test_default_ssl_root_cert_points_at_the_rds_bundle(monkeypatch, tmp_path):
+    """Asserted as a literal so changing it has to be deliberate. The default
+    used to be ../../keys/PostgreSQL_DB/eu-central-1-bundle.pem, which does not
+    exist on shiny.studyflix.info -- every server-mode connect failed on it."""
+    monkeypatch.setenv("DB_MODE", "server")
+    monkeypatch.setenv("DB_MASTER_KEY", "master")
+    monkeypatch.delenv("DB_SSL_ROOT_CERT", raising=False)
+    cipher = _fernet_from_master("master")
+    (tmp_path / "postgresql_server_python.txt").write_bytes(
+        cipher.encrypt(json.dumps({"host": "h", "port": "5432", "dbname": "d", "user": "u"}).encode()))
+    (tmp_path / "postgresql_key_python.txt").write_bytes(cipher.encrypt(b"secret"))
+    cfg = CredentialManager(key_dir=str(tmp_path)).get_db_config()
+    assert cfg["sslrootcert"] == "../../metabase-data/postgres/eu-central-1-bundle.pem"
+
+
 def test_server_mode_decrypts_and_builds_config(monkeypatch, tmp_path):
     monkeypatch.setenv("DB_MODE", "server")
     monkeypatch.setenv("DB_MASTER_KEY", "master")

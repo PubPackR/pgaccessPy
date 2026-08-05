@@ -1,6 +1,6 @@
 [project]
 name = "pgaccess"
-version = "0.1.0"
+version = "0.1.1"
 description = "Authenticated PostgreSQL access for Studyflix Python base apps (the Python twin of Billomatics::postgres_connect)."
 readme = "README.md"
 # Matches the production interpreter on shiny.studyflix.info (/usr/bin/python3 == 3.12.3).
