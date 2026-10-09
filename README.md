@@ -41,9 +41,9 @@ uv run pytest tests -v
 
 ### Production (base apps)
 
-**Not yet wired up anywhere.** No app consumes this package in production today;
-base-65 still carries its own copies of both modules. Read this section before
-wiring the first one — the deploy has constraints that are not obvious.
+**Consumed by base-64** (`func/pgaccessPy` plus `func/_bootstrap.py` — Route B
+below). base-65 still carries its own copies of both modules. Read this section
+before wiring the next app — the deploy has constraints that are not obvious.
 
 This package is not on PyPI, so `pip install pgaccess` will never work. There are
 two possible routes, and neither is free.
@@ -66,14 +66,15 @@ library upgrades all of them at once. Staged migrations are not possible.
 The package files travel inside the consuming repo, so nothing is installed on
 the host. Each app pins its own commit, so apps can migrate one at a time.
 
-The cost is three separate changes, all currently missing:
+The cost is three separate changes. The first has since been made; the other two
+still apply to every new consumer.
 
-1. **The shared deploy workflow must check out submodules.**
+1. **The shared deploy workflow must check out submodules.** Done:
    `studyflix/Shiny-0-studyflix-infrastructure/.github/workflows/deploy-app.yml`
-   uses `actions/checkout@v7` with no `submodules:` input, so submodule
-   directories arrive empty. A consuming repo cannot fix this itself — the
-   checkout happens inside the shared workflow, which accepts only
-   `shiny_host` / `shiny_port` / `shiny_username`.
+   now checks out with `submodules: recursive`, so submodule directories arrive
+   populated. It used to pass no `submodules:` input at all, and a consuming repo
+   could not fix that itself — the checkout happens inside the shared workflow,
+   which accepts only `shiny_host` / `shiny_port` / `shiny_username`.
 
 2. **The submodule must live inside `func/`.** That deploy does not copy the
    repository; it copies a hardcoded allowlist of names — `app.R`, `config.R`,
@@ -90,8 +91,16 @@ The cost is three separate changes, all currently missing:
 
 The host runs no dependency installation step — deploys only rsync files, and
 the `requirements.txt` in the allowlist above is copied but never installed. So
-`cryptography` and `psycopg2` must already be hand-installed on the host. The
-versions pinned in `pyproject.toml` are the versions confirmed installed there.
+`psycopg2` must already be hand-installed on the host, and so must everything
+sfsecrets imports: `cryptography`, `google-auth`, `requests`, `urllib3`. The
+versions pinned in this `pyproject.toml` and in sfsecrets' own are the versions
+confirmed installed there.
+
+**sfsecrets travels separately.** `pgaccess.credentials` imports it but
+deliberately does not declare it as a dependency (see Configuration below), so a
+consuming app vendors the two submodules side by side — base-64 has
+`func/pgaccessPy` and will have `func/sfsecrets` — and puts both on `sys.path`
+before the first `from pgaccess import ...`.
 
 ## Configuration
 
@@ -99,11 +108,22 @@ All settings come from environment variables. Nothing is hardcoded per host.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `DB_MODE` | `server` | `server` (encrypted keyfiles) or `local` (interactive password prompt) |
-| `DB_MASTER_KEY` | — | **Required in server mode.** Decrypts the credential files. |
-| `DB_KEY_DIR` | `../../keys/PostgreSQL_DB` | Directory holding the encrypted credential files |
+| `DB_MODE` | `server` | `server` (resolve the credential through sfsecrets) or `local` (interactive password prompt) |
+| `SF_SECRET_BACKEND` | `file` | Read by sfsecrets, not by this package. `gsm` for Google Secret Manager, `file` for the legacy encrypted keyfiles. Production sets `gsm` and sfsecrets refuses anything else there. |
+| `DB_MASTER_KEY` | — | **The `file` backend only.** Decrypts the legacy keyfiles; unused under `gsm`. |
+| `DB_KEY_DIR` | `../../keys/PostgreSQL_DB` | Directory holding the legacy encrypted keyfiles. The `file` backend only. |
 | `DB_SSL_ROOT_CERT` | `../../metabase-data/postgres/eu-central-1-bundle.pem` | RDS CA bundle, verified against in server mode (`sslmode=verify-full`) |
 | `DB_LOCAL_HOST` | `localhost` | Local mode only |
+
+### Credential resolution
+
+Server mode asks sfsecrets for one secret by name,
+`studyflix-postgresql-connection`, and never learns which backend answered:
+Google Secret Manager in production, the legacy encrypted keyfiles anywhere
+else. What stays in this package is the database shaping —
+`sslmode=verify-full`, the certificate path, psycopg2's keyword names. A secret
+that is not a JSON object carrying `host`, `port`, `dbname`, `user` and
+`password` is refused by field name, never by value.
 
 `DB_MASTER_KEY` is deliberately **separate** from `ADMANAGER_DECRYPT_KEY` and any
 other application secret. This package only ever knows about the database.
