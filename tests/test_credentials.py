@@ -2,6 +2,7 @@ import importlib
 import json
 import os
 import sys
+import types
 
 import pytest
 import sfsecrets
@@ -49,7 +50,10 @@ def _isolated_secrets_environment(monkeypatch):
     host refuses every backend but gsm. On a developer machine authenticated for
     Secret Manager -- which anyone working on this migration is -- that would
     fail every file-backend test below with "this host is in production mode"
-    instead of testing what the test is named after.
+    instead of testing what the test is named after. SF_KEY_DIR is the file
+    backend's own fallback key directory: these tests always pass key_dir
+    explicitly, so it should never be consulted, and unsetting it means a test
+    that stops passing it fails instead of quietly reading someone's keys/.
 
     The cache is keyed by (name, version, key_dir, key digest) and lives for the
     process. tmp_path keeps today's tests apart by itself, but any shared
@@ -57,6 +61,7 @@ def _isolated_secrets_environment(monkeypatch):
     """
     monkeypatch.delenv("SF_SECRET_BACKEND", raising=False)
     monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.delenv("SF_KEY_DIR", raising=False)
     sfsecrets.secret_cache_clear()
     yield
     sfsecrets.secret_cache_clear()
@@ -142,6 +147,19 @@ def test_the_key_dir_handed_to_sfsecrets_is_the_parent_of_the_postgres_dir(monke
     assert os.path.basename(seen["key_dir"]) == "keys"
 
 
+def test_a_single_component_key_dir_stays_in_the_callers_own_directory(monkeypatch):
+    """dirname() of a single-component path is "", and sfsecrets treats a falsy
+    key_dir as "not given": `root = key_dir or SF_KEY_DIR or "../../keys"`. The
+    explicit argument would be dropped and the production keys directory read
+    instead -- no error, a different credential. "." must reach sfsecrets."""
+    seen = {}
+    monkeypatch.setenv("DB_MODE", "server")
+    monkeypatch.setattr(sfsecrets, "secret_get", _fake_secret_get(json.dumps(
+        {"host": "h", "port": "5432", "dbname": "d", "user": "u", "password": "p"}), seen))
+    CredentialManager(key_dir="PostgreSQL_DB").get_db_config()
+    assert seen["key_dir"] == os.curdir
+
+
 def test_a_secret_that_is_not_json_is_refused_without_echoing_it(monkeypatch):
     """json.JSONDecodeError.doc holds the whole string that failed to parse --
     for this secret, the connection details and the password. The refusal must
@@ -190,6 +208,59 @@ def test_a_missing_sfsecrets_names_the_vendoring_contract(monkeypatch):
             importlib.reload(credentials)
         message = str(excinfo.value)
         assert "sfsecrets" in message and "vendor" in message
+    finally:
+        monkeypatch.undo()
+        importlib.reload(credentials)
+
+
+class _SfsecretsImportFails:
+    """A finder that makes `import sfsecrets` fail the way a dependency missing
+    INSIDE sfsecrets fails: ModuleNotFoundError naming that other module."""
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "sfsecrets":
+            raise ModuleNotFoundError("No module named 'cryptography'", name="cryptography")
+        return None
+
+
+def test_an_import_error_from_inside_sfsecrets_is_not_blamed_on_the_submodule(monkeypatch):
+    """This package stopped declaring cryptography, which sfsecrets imports at
+    module scope -- so "sfsecrets is missing" and "something sfsecrets needs is
+    missing" became different faults with different fixes. Reporting the second
+    as the first sends whoever hits it to the wrong file, which is what
+    sfsecrets' own _key_source() exists to avoid.
+    """
+    for name in [n for n in sys.modules if n == "sfsecrets" or n.startswith("sfsecrets.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setattr(sys, "meta_path", [_SfsecretsImportFails()] + sys.meta_path)
+    try:
+        with pytest.raises(ModuleNotFoundError) as excinfo:
+            importlib.reload(credentials)
+        assert excinfo.value.name == "cryptography"
+        assert "vendor" not in str(excinfo.value)
+    finally:
+        monkeypatch.undo()
+        importlib.reload(credentials)
+
+
+def test_an_sfsecrets_without_secret_get_is_refused_with_the_submodule_remedy(monkeypatch):
+    """An empty directory on sys.path imports as an implicit namespace package,
+    so `import sfsecrets` succeeds and nothing fails until a resolution calls
+    secret_get -- an AttributeError naming neither submodules nor vendoring.
+    Measured: an empty func/sfsecrets/ with func/ on sys.path imports as
+    <module 'sfsecrets' (namespace)> with no secret_get.
+
+    No consumer's bootstrap produces that today: base-64 puts func/pgaccessPy on
+    sys.path and base-65 puts func/sfsecrets, and an uninitialised submodule
+    raises ModuleNotFoundError there (measured too). So this guards a wiring
+    mistake rather than the layout in use.
+    """
+    monkeypatch.setitem(sys.modules, "sfsecrets", types.ModuleType("sfsecrets"))
+    try:
+        with pytest.raises(ImportError) as excinfo:
+            importlib.reload(credentials)
+        assert "secret_get" in str(excinfo.value)
+        assert "git submodule update" in str(excinfo.value)
     finally:
         monkeypatch.undo()
         importlib.reload(credentials)

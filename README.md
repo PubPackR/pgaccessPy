@@ -125,6 +125,15 @@ else. What stays in this package is the database shaping —
 that is not a JSON object carrying `host`, `port`, `dbname`, `user` and
 `password` is refused by field name, never by value.
 
+One trap worth knowing before you debug it: sfsecrets considers a host to be
+production when `/etc/studyflix/production` exists **or**
+`GOOGLE_APPLICATION_CREDENTIALS` names a file that exists — and on a production
+host it refuses every backend but `gsm`. So a developer machine authenticated
+for Secret Manager cannot use the `file` backend at all; it fails with "this
+host is in production mode". Unset that variable, or set
+`SF_SECRET_BACKEND=gsm`. The test suite unsets it (`tests/test_credentials.py`)
+for exactly this reason.
+
 `DB_MASTER_KEY` is deliberately **separate** from `ADMANAGER_DECRYPT_KEY` and any
 other application secret. This package only ever knows about the database.
 

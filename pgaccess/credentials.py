@@ -27,12 +27,33 @@ import os
 try:
     import sfsecrets
 except ImportError as exc:
+    if exc.name != "sfsecrets":
+        # Something sfsecrets itself imports is missing -- cryptography, say,
+        # which this package deliberately stopped declaring. Re-raise it as
+        # itself: an error must not send an operator to the wrong file, which is
+        # the same reason sfsecrets has _key_source().
+        raise
     raise ImportError(
         "pgaccess.credentials resolves credentials through sfsecrets, which is "
         "not a dependency of this package: the consuming app vendors it as a git "
         "submodule and puts it on sys.path first (base-64's func/_bootstrap.py "
         "is the pattern). The import error that got us here is chained below."
     ) from exc
+
+if not hasattr(sfsecrets, "secret_get"):
+    # A directory on sys.path named sfsecrets but holding no module imports as an
+    # implicit namespace package: the import above SUCCEEDS and the first
+    # resolution dies on AttributeError instead. That is what an uninitialised
+    # submodule looks like to any consumer that puts the containing directory on
+    # sys.path rather than the submodule itself. No consumer does that today
+    # (base-64 adds func/pgaccessPy, base-65 adds func/sfsecrets, and an empty
+    # submodule then fails cleanly above), so this is a guard against a wiring
+    # mistake, not against today's layout.
+    raise ImportError(
+        "sfsecrets imported but has no secret_get(): %r. An empty directory on "
+        "sys.path imports as a namespace package, which is what an "
+        "uninitialised submodule looks like -- run `git submodule update --init "
+        "--recursive` in the consuming app." % getattr(sfsecrets, "__file__", None))
 
 SECRET_NAME = "studyflix-postgresql-connection"
 # Field names, never values, appear in this module's error messages.
@@ -76,9 +97,17 @@ class CredentialManager:
         separator (".../PostgreSQL_DB/") returns it unchanged instead of its
         parent, and normpath collapses the separator so dirname finds the real
         one rather than doubling PostgreSQL_DB onto itself.
+
+        `or os.curdir` because dirname() returns "" for a single-component
+        key_dir ("PostgreSQL_DB", or "./PostgreSQL_DB" -- normpath strips the
+        "."), and "" is falsy in sfsecrets' `root = key_dir or SF_KEY_DIR or
+        "../../keys"`. The explicit argument would be dropped and the real keys
+        directory read instead, silently and with a different credential --
+        exactly the failure that making key_dir an argument exists to prevent,
+        reopened one layer up. "." keeps the caller in its own directory.
         """
-        raw = sfsecrets.secret_get(
-            SECRET_NAME, key_dir=os.path.dirname(os.path.normpath(self.key_dir)))
+        parent = os.path.dirname(os.path.normpath(self.key_dir)) or os.curdir
+        raw = sfsecrets.secret_get(SECRET_NAME, key_dir=parent)
 
         fields = _UNSET
         parse_error = None
