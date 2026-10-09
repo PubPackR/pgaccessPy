@@ -1,21 +1,34 @@
 [project]
 name = "pgaccess"
-version = "0.1.1"
+version = "0.2.0"
 description = "Authenticated PostgreSQL access for Studyflix Python base apps (the Python twin of Billomatics::postgres_connect)."
 readme = "README.md"
 # Matches the production interpreter on shiny.studyflix.info (/usr/bin/python3 == 3.12.3).
 requires-python = ">=3.12"
 dependencies = [
-    # Pinned to the versions confirmed installed on shiny.studyflix.info, because
+    # Pinned to the version confirmed installed on shiny.studyflix.info, because
     # production consumes this package as a git submodule with no install step --
     # the host's hand-installed packages are what actually get imported.
-    "cryptography==46.0.4",
     "psycopg2-binary==2.9.10",
+    # sfsecrets is NOT listed here on purpose, although pgaccess.credentials
+    # imports it: the consuming app vendors it as a git submodule and puts it on
+    # sys.path (base-64's func/_bootstrap.py). Declaring it would promise an
+    # install step the FlowForce host does not run. The dev group below is how
+    # the suite gets it; pgaccess/credentials.py documents the contract.
 ]
 
 [dependency-groups]
 dev = [
     "pytest==9.1.1",
+    # Dev-only, for the reason above. Pinned to the exact commit base-50,
+    # base-54 and base-65 vendor today, so the suite cannot go green against a
+    # different sfsecrets than the server actually runs. Bump it here whenever
+    # those submodules are bumped.
+    "sfsecrets @ git+https://github.com/PubPackR/sfsecrets@918b6cabf520f6e9a60b1fa7ee7939a211d4ce23",
+    # Was a runtime dependency while this package decrypted the keyfiles itself.
+    # Only the tests need it now, to encrypt the fixtures sfsecrets' file backend
+    # reads back; sfsecrets brings its own copy for production use.
+    "cryptography==46.0.4",
 ]
 
 [build-system]
